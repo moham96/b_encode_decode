@@ -148,8 +148,8 @@ void main() {
       var c = 'i2222222222e';
       assert(c == bytesToString(re));
     });
-    test('It throws an exeption when passed -0', () {
-      expect(() => encode(-0), throwsException);
+    test('It encodes -0 as i0e', () {
+      expect(String.fromCharCodes(encode(-0)), equals('i0e'));
     });
     test('It encodes integers with leading zeros', () {
       var re = encode(00002);

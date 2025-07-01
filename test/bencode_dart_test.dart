@@ -201,6 +201,36 @@ void main() {
       assert(c == bytesToString(re));
     });
   });
+
+  group('Edge cases and error handling', () {
+    test('encode(null) returns empty Uint8List', () {
+      var result = encode(null);
+      expect(result, isA<Uint8List>());
+      expect(result.length, 0);
+    });
+
+    test('decode(Uint8List(0)) returns null', () {
+      var result = decode(Uint8List(0));
+      expect(result, isNull);
+    });
+
+    test('decode throws on invalid bencode (missing delimiter)', () {
+      expect(() => decode(stringToBytes('i42')), throwsA(isA<Exception>()));
+      expect(() => decode(stringToBytes('5hello')), throwsA(isA<Exception>()));
+    });
+
+    test('decode throws on invalid number', () {
+      expect(() => decode(stringToBytes('i4a2e')), throwsA(isA<Exception>()));
+      expect(() => decode(stringToBytes('i--42e')), throwsA(isA<Exception>()));
+    });
+
+    test('decode with start/end parameters decodes subrange', () {
+      var bytes = stringToBytes('i1ei2ei3e');
+      // Only decode the second integer (i2e)
+      var result = decode(bytes, start: 3, end: 6);
+      expect(result, 2);
+    });
+  });
 }
 
 Uint8List stringToBytes(str) {

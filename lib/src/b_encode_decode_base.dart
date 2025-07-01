@@ -1,6 +1,17 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+// Bencoding constants
+const int _bencodeIntegerStart = 0x69; // 'i'
+const int _bencodeStringDelimiter = 0x3A; // ':'
+const int _bencodeDictionaryStart = 0x64; // 'd'
+const int _bencodeListStart = 0x6C; // 'l'
+const int _bencodeEnd = 0x65; // 'e'
+
+final Uint8List _bencodeEndBuffer = Uint8List.fromList(utf8.encode('e'));
+final Uint8List _bencodeDictBuffer = Uint8List.fromList(utf8.encode('d'));
+final Uint8List _bencodeListBuffer = Uint8List.fromList(utf8.encode('l'));
+
 ///
 /// Encode objects to bencoding format bytes;
 ///
@@ -15,10 +26,6 @@ class _Encode {
   final dynamic _data;
   final Uint8List? _buffer;
   final int? _offset;
-
-  var buffE = Uint8List.fromList(utf8.encode('e')); // Buffer.from('e');
-  var buffD = Uint8List.fromList(utf8.encode('d')); //Buffer.from('d');
-  var buffL = Uint8List.fromList(utf8.encode('l')); //Buffer.from('l');
 
   _Encode(this._data, [this._buffer, this._offset]);
 
@@ -91,7 +98,7 @@ class _Encode {
   }
 
   void dict(List<Uint8List> buffers, Map data) {
-    buffers.add(buffD);
+    buffers.add(_bencodeDictBuffer);
 
     var j = 0;
     dynamic k;
@@ -105,19 +112,19 @@ class _Encode {
       _encode(buffers, data[k]);
     }
 
-    buffers.add(buffE);
+    buffers.add(_bencodeEndBuffer);
   }
 
   void list(List<Uint8List> buffers, List data) {
     var c = data.length;
-    buffers.add(buffL);
+    buffers.add(_bencodeListBuffer);
 
     for (var i = 0; i < c; i++) {
       if (data[i] == null) continue;
       _encode(buffers, data[i]);
     }
 
-    buffers.add(buffE);
+    buffers.add(_bencodeEndBuffer);
   }
 }
 
@@ -137,17 +144,6 @@ dynamic decode(Uint8List data, {int? start, int? end, String? stringEncoding}) {
 }
 
 class _Decode {
-  // ignore: constant_identifier_names
-  static const int INTEGER_START = 0x69; // 'i'
-  // ignore: constant_identifier_names
-  static const int STRING_DELIM = 0x3A; // ':'
-  // ignore: constant_identifier_names
-  static const int DICTIONARY_START = 0x64; // 'd'
-  // ignore: constant_identifier_names
-  static const int LIST_START = 0x6C; // 'l'
-  // ignore: constant_identifier_names
-  static const int END_OF_TYPE = 0x65; // 'e'
-
   int _position = 0;
   String? _stringEncoding;
   Uint8List _data;
@@ -196,11 +192,11 @@ class _Decode {
   dynamic next() {
     if (_data.isEmpty) return null;
     switch (_data[_position]) {
-      case DICTIONARY_START:
+      case _bencodeDictionaryStart:
         return dictionary();
-      case LIST_START:
+      case _bencodeListStart:
         return list();
-      case INTEGER_START:
+      case _bencodeIntegerStart:
         return integer();
       default:
         return buffer();
@@ -225,7 +221,7 @@ class _Decode {
 
     var dict = <String, dynamic>{};
 
-    while (_data[_position] != END_OF_TYPE) {
+    while (_data[_position] != _bencodeEnd) {
       var keyBuffer = buffer();
       // It should be noted here that sometimes the returned key string will be wrong when parsed with utf-8
       // For example, an infohash is encoded by latin1, and it will be wrong to decode it with utf-8.
@@ -250,7 +246,7 @@ class _Decode {
 
     var lst = [];
 
-    while (_data[_position] != END_OF_TYPE) {
+    while (_data[_position] != _bencodeEnd) {
       lst.add(next());
     }
 
@@ -260,7 +256,7 @@ class _Decode {
   }
 
   int integer() {
-    var end = find(END_OF_TYPE);
+    var end = find(_bencodeEnd);
     var number = getIntFromBuffer(_data, _position + 1, end);
 
     _position = end + 1;
@@ -269,7 +265,7 @@ class _Decode {
   }
 
   dynamic buffer() {
-    var sep = find(STRING_DELIM);
+    var sep = find(_bencodeStringDelimiter);
     var length = getIntFromBuffer(_data, _position, sep);
     var end = ++sep + length;
 

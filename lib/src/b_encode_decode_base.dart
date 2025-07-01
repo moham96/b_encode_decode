@@ -42,7 +42,7 @@ class _Encode {
     bytes = result.length;
 
     if (_buffer != null) {
-      (_buffer as Uint8List).insertAll(_offset ?? 0, result);
+      _buffer!.setAll(_offset ?? 0, result);
       return _buffer!;
     }
 

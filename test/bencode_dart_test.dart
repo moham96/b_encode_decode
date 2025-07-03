@@ -230,6 +230,45 @@ void main() {
       var result = decode(bytes, start: 3, end: 6);
       expect(result, 2);
     });
+    test('can encode infoHash', () {
+      var infoHashBytes = [
+        221,
+        130,
+        85,
+        236,
+        220,
+        124,
+        165,
+        95,
+        176,
+        187,
+        248,
+        19,
+        35,
+        216,
+        112,
+        98,
+        219,
+        31,
+        109,
+        28
+      ];
+      var infoHashAsString = String.fromCharCodes(infoHashBytes);
+
+      var encoded = encode(infoHashAsString);
+      var decoded = decode(encoded);
+      var decodeBytes = Uint8List.fromList(decoded);
+
+      expect(infoHashBytes, equals(decodeBytes));
+      expect(infoHashAsString, equals(String.fromCharCodes(decodeBytes)));
+    });
+    test('can encode utf8 string with stringEncoding', () {
+      var str = 'gâteau';
+      var encoded = encode(str, 'utf-8');
+      expect(encoded, equals(stringToBytes('7:gâteau')));
+      var decoded = decode(encoded, stringEncoding: 'utf-8');
+      expect(str, equals(decoded));
+    });
   });
 }
 

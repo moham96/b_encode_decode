@@ -16,18 +16,25 @@ final Uint8List _bencodeListBuffer = Uint8List.fromList(utf8.encode('l'));
 /// Encode objects to bencoding format bytes;
 ///
 /// This method comes from https://github.com/benjreinhart/bencode-js , just transfer JS to Dart
-Uint8List encode(dynamic data, [dynamic buffer, int? offset]) {
+Uint8List encode(
+  dynamic data, [
+  String? stringEncoding,
+  Uint8List? buffer,
+  int? offset,
+]) {
   if (data == null) return Uint8List(0);
-  return _Encode(data, buffer, offset).encoding();
+  return _Encode(data, stringEncoding, buffer, offset).encoding();
 }
 
 class _Encode {
   int bytes = -1;
   final dynamic _data;
   final Uint8List? _buffer;
+  final String? _stringEncoding;
   final int? _offset;
 
-  _Encode(this._data, [this._buffer, this._offset]);
+  _Encode(this._data, [String? stringEncoding, this._buffer, this._offset])
+      : _stringEncoding = stringEncoding?.toLowerCase();
 
   Uint8List encoding() {
     var buffers = <Uint8List>[];
@@ -89,8 +96,16 @@ class _Encode {
   }
 
   void string(List<Uint8List> buffers, String data) {
-    var bytesLength = Uint8List.fromList(data.codeUnits).lengthInBytes;
-    buffers.add(Uint8List.fromList('$bytesLength:$data'.codeUnits));
+    var encoder =
+        _stringEncoding == null ? null : Encoding.getByName(_stringEncoding);
+    if (encoder != null) {
+      var encodedData = encoder.encode(data);
+      var bytesLength = encodedData.length;
+      buffers.add(utf8.encode('$bytesLength:$data'));
+    } else {
+      var bytesLength = Uint8List.fromList(data.codeUnits).lengthInBytes;
+      buffers.add(Uint8List.fromList('$bytesLength:$data'.codeUnits));
+    }
   }
 
   void number(List<Uint8List> buffers, num data) {

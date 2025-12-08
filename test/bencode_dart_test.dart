@@ -269,6 +269,28 @@ void main() {
       var decoded = decode(encoded, stringEncoding: 'utf-8');
       expect(str, equals(decoded));
     });
+
+    test('can encode latin1 string with stringEncoding - byte length matches',
+        () {
+      // Use a string that has different byte lengths in UTF-8 vs Latin1
+      // Latin1 uses 1 byte per character, UTF-8 uses 2 bytes for some characters
+      var str = 'café'; // 'é' is 1 byte in Latin1, 2 bytes in UTF-8
+      var encoded = encode(str, 'latin1');
+      var decoded = decode(encoded, stringEncoding: 'latin1');
+      expect(str, equals(decoded));
+
+      // Verify the byte length in the encoding matches the actual data bytes
+      // 'café' in Latin1 is 4 bytes, so the encoding should be "4:café" (prefix) + 4 bytes
+      var latin1Encoder = Encoding.getByName('latin1')!;
+      var expectedBytes = latin1Encoder.encode(str);
+      expect(expectedBytes.length, equals(4));
+
+      // The encoded result should have: "4:" (2 bytes) + 4 data bytes = 6 bytes total
+      expect(encoded.length, equals(6));
+
+      // Verify we can decode it back correctly
+      expect(decoded, equals(str));
+    });
   });
 }
 

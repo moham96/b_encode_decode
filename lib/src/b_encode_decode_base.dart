@@ -101,7 +101,8 @@ class _Encode {
     if (encoder != null) {
       var encodedData = encoder.encode(data);
       var bytesLength = encodedData.length;
-      buffers.add(utf8.encode('$bytesLength:$data'));
+      buffers.add(utf8.encode('$bytesLength:'));
+      buffers.add(Uint8List.fromList(encodedData));
     } else {
       var bytesLength = Uint8List.fromList(data.codeUnits).lengthInBytes;
       buffers.add(Uint8List.fromList('$bytesLength:$data'.codeUnits));

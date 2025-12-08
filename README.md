@@ -1,5 +1,7 @@
 A Dart library for implementing the encoding and decoding of the Bencode format.
 
+[![codecov](https://codecov.io/gh/moham96/b_encode_decode/branch/main/graph/badge.svg)](https://codecov.io/gh/moham96/b_encode_decode)
+
 All codes come from [bencode.js][bencode.js], include example and test codes , I just transfer them to Dart code.
 
 ## Install
@@ -62,6 +64,8 @@ dart tool/coverage.dart
 ```
 
 The coverage report will be generated at `coverage/lcov.info` and can be viewed with tools like `genhtml` or uploaded to services like Codecov.
+
+Coverage is automatically uploaded to [Codecov](https://codecov.io) on every push and pull request via GitHub Actions.
 
 ## Features and bugs
 

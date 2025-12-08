@@ -43,6 +43,26 @@ main() {
   print(map);
 ```
 
+## Testing
+
+Run tests:
+```bash
+dart test
+```
+
+Run tests with coverage:
+```bash
+dart test --coverage=coverage
+dart run coverage:format_coverage --lcov --in=coverage --out=coverage/lcov.info --packages=.dart_tool/package_config.json --report-on=lib
+```
+
+Or use the provided script:
+```bash
+dart tool/coverage.dart
+```
+
+The coverage report will be generated at `coverage/lcov.info` and can be viewed with tools like `genhtml` or uploaded to services like Codecov.
+
 ## Features and bugs
 
 Please file feature requests and bugs at the [issue tracker][tracker].

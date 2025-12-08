@@ -230,6 +230,126 @@ void main() {
       var result = decode(bytes, start: 3, end: 6);
       expect(result, 2);
     });
+
+    test('decode with invalid range throws ArgumentError', () {
+      var bytes = stringToBytes('i42e');
+      expect(
+        () => decode(bytes, start: -1, end: 4),
+        throwsA(isA<ArgumentError>()),
+      );
+      expect(
+        () => decode(bytes, start: 0, end: 100),
+        throwsA(isA<ArgumentError>()),
+      );
+      expect(
+        () => decode(bytes, start: 5, end: 3),
+        throwsA(isA<ArgumentError>()),
+      );
+    });
+
+    test('decode throws BencodeDecodeException with position info', () {
+      try {
+        decode(stringToBytes('i42'));
+        fail('Should have thrown an exception');
+      } catch (e) {
+        expect(e, isA<BencodeDecodeException>());
+        final exception = e as BencodeDecodeException;
+        expect(exception.message, contains('Missing delimiter'));
+        expect(exception.position, isNotNull);
+      }
+    });
+
+    test('decode throws on empty integer', () {
+      expect(
+        () => decode(stringToBytes('ie')),
+        throwsA(isA<BencodeDecodeException>()),
+      );
+    });
+
+    test('decode throws on floating point number', () {
+      expect(
+        () => decode(stringToBytes('i3.14e')),
+        throwsA(isA<BencodeDecodeException>()),
+      );
+      try {
+        decode(stringToBytes('i3.14e'));
+      } catch (e) {
+        expect(e, isA<BencodeDecodeException>());
+        final exception = e as BencodeDecodeException;
+        expect(exception.message, contains('Floating point'));
+      }
+    });
+
+    test('decode handles positive sign in integer', () {
+      var result = decode(stringToBytes('i+42e'));
+      expect(result, 42);
+    });
+
+    test('decode throws on negative string length', () {
+      expect(
+        () => decode(stringToBytes('-5:hello')),
+        throwsA(isA<BencodeDecodeException>()),
+      );
+      try {
+        decode(stringToBytes('-5:hello'));
+      } catch (e) {
+        expect(e, isA<BencodeDecodeException>());
+        final exception = e as BencodeDecodeException;
+        expect(exception.message, contains('Invalid string length'));
+      }
+    });
+
+    test('decode throws when string length exceeds available data', () {
+      expect(
+        () => decode(stringToBytes('100:hello')),
+        throwsA(isA<BencodeDecodeException>()),
+      );
+      try {
+        decode(stringToBytes('100:hello'));
+      } catch (e) {
+        expect(e, isA<BencodeDecodeException>());
+        final exception = e as BencodeDecodeException;
+        expect(exception.message, contains('exceeds available data'));
+      }
+    });
+
+    test('decode throws on incomplete dictionary', () {
+      expect(
+        () => decode(stringToBytes('d3:key5:value')),
+        throwsA(isA<BencodeDecodeException>()),
+      );
+      try {
+        decode(stringToBytes('d3:key5:value'));
+      } catch (e) {
+        expect(e, isA<BencodeDecodeException>());
+        final exception = e as BencodeDecodeException;
+        expect(exception.message, contains('Unexpected end of data'));
+        expect(exception.message, contains('dictionary'));
+      }
+    });
+
+    test('decode throws on incomplete list', () {
+      expect(
+        () => decode(stringToBytes('l5:hello')),
+        throwsA(isA<BencodeDecodeException>()),
+      );
+      try {
+        decode(stringToBytes('l5:hello'));
+      } catch (e) {
+        expect(e, isA<BencodeDecodeException>());
+        final exception = e as BencodeDecodeException;
+        expect(exception.message, contains('Unexpected end of data'));
+        expect(exception.message, contains('list'));
+      }
+    });
+
+    test('decode throws on unknown encoding', () {
+      var encoded = encode('hello', 'utf-8');
+      expect(
+        () => decode(encoded, stringEncoding: 'unknown-encoding-12345'),
+        throwsA(isA<ArgumentError>()),
+      );
+    });
     test('can encode infoHash', () {
       var infoHashBytes = [
         221,
@@ -290,6 +410,225 @@ void main() {
 
       // Verify we can decode it back correctly
       expect(decoded, equals(str));
+    });
+  });
+
+  group('Encoding features', () {
+    test('encode bool true as i1e', () {
+      var result = encode(true);
+      expect(bytesToString(result), equals('i1e'));
+    });
+
+    test('encode bool false as i0e', () {
+      var result = encode(false);
+      expect(bytesToString(result), equals('i0e'));
+    });
+
+    test('encode Uint8List', () {
+      var bytes = Uint8List.fromList([1, 2, 3, 4, 5]);
+      var result = encode(bytes);
+      expect(result, equals(stringToBytes('5:${String.fromCharCodes(bytes)}')));
+    });
+
+    test('encode with buffer and offset', () {
+      var buffer = Uint8List(20);
+      var data = {'key': 'value'};
+      var encoded = encode(data, null, buffer, 5);
+      expect(encoded, same(buffer));
+      // Verify the data was written at offset 5
+      // Need to find where the encoded data ends
+      var encodedData = encode(data);
+      // Decode from the buffer starting at offset 5
+      var decoded = decode(buffer,
+          start: 5, end: 5 + encodedData.length, stringEncoding: 'utf-8');
+      expect(decoded, equals(data));
+    });
+
+    test('encode with buffer too small throws ArgumentError', () {
+      var buffer = Uint8List(5);
+      var data = {'key': 'value'};
+      expect(
+        () => encode(data, null, buffer, 0),
+        throwsA(isA<ArgumentError>()),
+      );
+      try {
+        encode(data, null, buffer, 0);
+      } catch (e) {
+        expect(e, isA<ArgumentError>());
+        final error = e as ArgumentError;
+        expect(error.message, contains('Buffer too small'));
+      }
+    });
+
+    test('encode double preserves decimal representation', () {
+      var result = encode(42.0);
+      // Doubles are encoded with their string representation
+      expect(bytesToString(result), equals('i42.0e'));
+    });
+
+    test('encode list with null values skips nulls', () {
+      var result = encode([1, null, 2, null, 3]);
+      expect(bytesToString(result), equals('li1ei2ei3ee'));
+    });
+
+    test('encode map with null values skips nulls', () {
+      var result = encode({'a': 1, 'b': null, 'c': 2});
+      expect(bytesToString(result), equals('d1:ai1e1:ci2ee'));
+    });
+
+    test('encode map keys are sorted', () {
+      var result = encode({'z': 1, 'a': 2, 'm': 3});
+      expect(bytesToString(result), equals('d1:ai2e1:mi3e1:zi1ee'));
+    });
+  });
+
+  group('Decoding features', () {
+    test('decode returns Uint8List for strings when no encoding specified', () {
+      var encoded = encode('hello');
+      var decoded = decode(encoded);
+      expect(decoded, isA<Uint8List>());
+      expect(bytesToString(decoded), equals('hello'));
+    });
+
+    test('decode returns String when encoding is specified', () {
+      var encoded = encode('hello', 'utf-8');
+      var decoded = decode(encoded, stringEncoding: 'utf-8');
+      expect(decoded, isA<String>());
+      expect(decoded, equals('hello'));
+    });
+
+    test('decode handles empty string', () {
+      var encoded = encode('');
+      var decoded = decode(encoded);
+      expect(decoded, isA<Uint8List>());
+      expect((decoded as Uint8List).length, equals(0));
+    });
+
+    test('decode handles zero integer', () {
+      var result = decode(stringToBytes('i0e'));
+      expect(result, equals(0));
+    });
+
+    test('decode handles large integers', () {
+      var result = decode(stringToBytes('i9223372036854775807e'));
+      expect(result, equals(9223372036854775807));
+    });
+
+    test('decode handles very negative integers', () {
+      var result = decode(stringToBytes('i-9223372036854775808e'));
+      expect(result, equals(-9223372036854775808));
+    });
+
+    test('decode with start parameter only decodes from start to end', () {
+      var bytes = stringToBytes('i1ei2ei3e');
+      // When only start is provided, it decodes from start to end of buffer
+      // So starting at position 3 (after 'i1e') should decode 'i2e' (first complete value)
+      var result = decode(bytes, start: 3);
+      expect(result, equals(2));
+    });
+
+    test('decode handles nested structures deeply', () {
+      var encoded = encode([
+        [
+          [
+            {'deep': 'value'}
+          ]
+        ]
+      ]);
+      var decoded = decode(encoded);
+      expect(decoded, isA<List>());
+      expect((decoded as List).length, equals(1));
+    });
+
+    test('decode handles dictionary with non-UTF8 keys', () {
+      // Create a dictionary with a key that's not valid UTF-8
+      var bytes = Uint8List.fromList([
+        100, // 'd'
+        50, 58, // '2:'
+        255, 255, // Invalid UTF-8 key
+        49, 58, 97, // '1:a'
+        101, // 'e'
+      ]);
+      var result = decode(bytes);
+      expect(result, isA<Map>());
+    });
+  });
+
+  group('BencodeDecodeException', () {
+    test('BencodeDecodeException without position', () {
+      var exception = BencodeDecodeException('Test error');
+      expect(exception.message, equals('Test error'));
+      expect(exception.position, isNull);
+      expect(exception.toString(), contains('BencodeDecodeException'));
+      expect(exception.toString(), contains('Test error'));
+      expect(exception.toString(), isNot(contains('position')));
+    });
+
+    test('BencodeDecodeException with position', () {
+      var exception = BencodeDecodeException('Test error', 42);
+      expect(exception.message, equals('Test error'));
+      expect(exception.position, equals(42));
+      expect(exception.toString(), contains('BencodeDecodeException'));
+      expect(exception.toString(), contains('Test error'));
+      expect(exception.toString(), contains('position 42'));
+    });
+  });
+
+  group('Edge cases for encoding', () {
+    test('encode empty string', () {
+      var result = encode('');
+      expect(bytesToString(result), equals('0:'));
+    });
+
+    test('encode string with special characters', () {
+      var str = 'hello\nworld\t!';
+      var encoded = encode(str);
+      var decoded = decode(encoded);
+      var decodedStr = decoded is String ? decoded : bytesToString(decoded);
+      expect(decodedStr, equals(str));
+    });
+
+    test('encode very long string', () {
+      var longStr = 'a' * 10000;
+      var encoded = encode(longStr);
+      var decoded = decode(encoded);
+      var decodedStr = decoded is String ? decoded : bytesToString(decoded);
+      expect(decodedStr, equals(longStr));
+    });
+
+    test('encode list with mixed types', () {
+      var data = [
+        'string',
+        42,
+        true,
+        false,
+        [1, 2, 3],
+        {'key': 'value'},
+        Uint8List.fromList([1, 2, 3])
+      ];
+      var encoded = encode(data);
+      var decoded = decode(encoded);
+      expect(decoded, isA<List>());
+      expect((decoded as List).length, equals(7));
+    });
+
+    test('encode complex nested structure', () {
+      var data = {
+        'list': [
+          {'nested': 'value'},
+          [
+            1,
+            2,
+            {'inner': 3}
+          ]
+        ],
+        'number': 42,
+        'bool': true
+      };
+      var encoded = encode(data);
+      var decoded = decode(encoded);
+      expect(decoded, isA<Map>());
+      expect((decoded as Map)['number'], equals(42));
     });
   });
 }

@@ -1,21 +1,58 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
-// Bencoding constants
-const int _bencodeIntegerStart = 0x69; // 'i'
-const int _bencodeStringDelimiter = 0x3A; // ':'
-const int _bencodeDictionaryStart = 0x64; // 'd'
-const int _bencodeListStart = 0x6C; // 'l'
-const int _bencodeEnd = 0x65; // 'e'
+/// Bencode format constants
+class _BencodeConstants {
+  static const int integerStart = 0x69; // 'i'
+  static const int stringDelimiter = 0x3A; // ':'
+  static const int dictionaryStart = 0x64; // 'd'
+  static const int listStart = 0x6C; // 'l'
+  static const int end = 0x65; // 'e'
 
-final Uint8List _bencodeEndBuffer = Uint8List.fromList(utf8.encode('e'));
-final Uint8List _bencodeDictBuffer = Uint8List.fromList(utf8.encode('d'));
-final Uint8List _bencodeListBuffer = Uint8List.fromList(utf8.encode('l'));
+  // Pre-encoded buffers for common tokens
+  static final Uint8List endBuffer = Uint8List.fromList(utf8.encode('e'));
+  static final Uint8List dictBuffer = Uint8List.fromList(utf8.encode('d'));
+  static final Uint8List listBuffer = Uint8List.fromList(utf8.encode('l'));
+}
 
+/// Exception thrown when Bencode decoding fails.
+class BencodeDecodeException implements Exception {
+  final String message;
+  final int? position;
+
+  BencodeDecodeException(this.message, [this.position]);
+
+  @override
+  String toString() => position != null
+      ? 'BencodeDecodeException: $message (at position $position)'
+      : 'BencodeDecodeException: $message';
+}
+
+/// Encodes a Dart object to Bencode format.
 ///
-/// Encode objects to bencoding format bytes;
+/// Supports encoding:
+/// - [String]: Encoded as `<length>:<string>`
+/// - [int] or [double]: Encoded as `i<number>e`
+/// - [bool]: Encoded as `i1e` (true) or `i0e` (false)
+/// - [List]: Encoded as `l<items>e`
+/// - [Map<String, dynamic>]: Encoded as `d<key><value>e` (keys are sorted)
+/// - [Uint8List]: Encoded as `<length>:<bytes>`
 ///
-/// This method comes from https://github.com/benjreinhart/bencode-js , just transfer JS to Dart
+/// [stringEncoding] specifies the encoding to use for strings (e.g., 'utf-8', 'latin1').
+/// If null, strings are encoded using UTF-8.
+///
+/// [buffer] and [offset] allow encoding into an existing buffer at a specific offset.
+/// If provided, the encoded data will be written to [buffer] starting at [offset].
+///
+/// Returns an empty [Uint8List] if [data] is null.
+///
+/// Example:
+/// ```dart
+/// encode('hello')           // => Uint8List([54, 58, 104, 101, 108, 108, 111])
+/// encode(42)                // => Uint8List([105, 52, 50, 101])
+/// encode(['a', 1])          // => Uint8List([108, 49, 58, 97, 105, 49, 101, 101])
+/// encode({'key': 'value'})   // => Uint8List([100, 51, 58, 107, 101, 121, 53, 58, 118, 97, 108, 117, 101, 101])
+/// ```
 Uint8List encode(
   dynamic data, [
   String? stringEncoding,
@@ -37,19 +74,32 @@ class _Encode {
       : _stringEncoding = stringEncoding?.toLowerCase();
 
   Uint8List encoding() {
-    var buffers = <Uint8List>[];
-    Uint8List result;
-
+    final buffers = <Uint8List>[];
     _encode(buffers, _data);
-    result =
-        Uint8List.fromList(buffers.fold<List<int>>([], (previousValue, buffer) {
-      previousValue.addAll(buffer);
-      return previousValue;
-    }));
+
+    // Calculate total length for efficient allocation
+    final totalLength =
+        buffers.fold<int>(0, (sum, buffer) => sum + buffer.length);
+    final result = Uint8List(totalLength);
+
+    // Copy all buffers into result
+    int offset = 0;
+    for (final buffer in buffers) {
+      result.setRange(offset, offset + buffer.length, buffer);
+      offset += buffer.length;
+    }
+
     bytes = result.length;
 
     if (_buffer != null) {
-      _buffer!.setAll(_offset ?? 0, result);
+      final startOffset = _offset ?? 0;
+      if (startOffset + result.length > _buffer!.length) {
+        throw ArgumentError(
+          'Buffer too small: need ${startOffset + result.length} bytes, '
+          'but buffer has ${_buffer!.length} bytes',
+        );
+      }
+      _buffer!.setRange(startOffset, startOffset + result.length, result);
       return _buffer!;
     }
 
@@ -91,204 +141,295 @@ class _Encode {
   }
 
   void buffer(List<Uint8List> buffers, Uint8List data) {
-    buffers.add(Uint8List.fromList(utf8.encode('${data.length}:')));
+    final lengthPrefix = utf8.encode('${data.length}:');
+    buffers.add(Uint8List.fromList(lengthPrefix));
     buffers.add(data);
   }
 
   void string(List<Uint8List> buffers, String data) {
-    var encoder =
-        _stringEncoding == null ? null : Encoding.getByName(_stringEncoding);
+    final encoder =
+        _stringEncoding != null ? Encoding.getByName(_stringEncoding) : null;
+
     if (encoder != null) {
-      var encodedData = encoder.encode(data);
-      var bytesLength = encodedData.length;
-      buffers.add(utf8.encode('$bytesLength:'));
+      final encodedData = encoder.encode(data);
+      final lengthPrefix = utf8.encode('${encodedData.length}:');
+      buffers.add(Uint8List.fromList(lengthPrefix));
       buffers.add(Uint8List.fromList(encodedData));
     } else {
-      var bytesLength = Uint8List.fromList(data.codeUnits).lengthInBytes;
+      // Preserve original behavior: use codeUnits directly (not UTF-8 encoded)
+      // This matches the original implementation for backward compatibility
+      // Note: This is technically incorrect but maintained for compatibility
+      final bytesLength = Uint8List.fromList(data.codeUnits).lengthInBytes;
       buffers.add(Uint8List.fromList('$bytesLength:$data'.codeUnits));
     }
   }
 
   void number(List<Uint8List> buffers, num data) {
-    buffers.add(Uint8List.fromList(utf8.encode('i${data}e')));
+    final encoded = utf8.encode('i${data}e');
+    buffers.add(Uint8List.fromList(encoded));
   }
 
   void dict(List<Uint8List> buffers, Map data) {
-    buffers.add(_bencodeDictBuffer);
+    buffers.add(_BencodeConstants.dictBuffer);
 
-    var j = 0;
-    dynamic k;
-    var keys = data.keys.toList()..sort();
-    var kl = keys.length;
+    // Sort keys as required by Bencode specification
+    final keys = (data.keys.toList()..sort()).cast<String>();
 
-    for (; j < kl; j++) {
-      k = keys[j];
-      if (data[k] == null) continue;
-      string(buffers, k as String);
-      _encode(buffers, data[k]);
+    for (final key in keys) {
+      final value = data[key];
+      if (value == null) continue;
+      string(buffers, key);
+      _encode(buffers, value);
     }
 
-    buffers.add(_bencodeEndBuffer);
+    buffers.add(_BencodeConstants.endBuffer);
   }
 
   void list(List<Uint8List> buffers, List data) {
-    var c = data.length;
-    buffers.add(_bencodeListBuffer);
+    buffers.add(_BencodeConstants.listBuffer);
 
-    for (var i = 0; i < c; i++) {
-      if (data[i] == null) continue;
-      _encode(buffers, data[i]);
+    for (final item in data) {
+      if (item == null) continue;
+      _encode(buffers, item);
     }
 
-    buffers.add(_bencodeEndBuffer);
+    buffers.add(_BencodeConstants.endBuffer);
   }
 }
 
+/// Decodes Bencode-encoded data to Dart objects.
 ///
-/// Decode bencoding format bytes to object.
+/// Returns:
+/// - [String] if a string was decoded and [stringEncoding] is provided
+/// - [Uint8List] if a string was decoded but [stringEncoding] is null
+/// - [int] for integers
+/// - [List] for lists
+/// - [Map<String, dynamic>] for dictionaries
+/// - `null` if [data] is empty
 ///
-/// This method comes from https://github.com/benjreinhart/bencode-js , just transfer JS to Dart
+/// [start] and [end] allow decoding a subrange of the input data.
+/// If provided, only bytes from [start] (inclusive) to [end] (exclusive) are decoded.
 ///
-/// If don't provide string encoding , decoder won't decode the string field , just return ```Uint8List```
+/// [stringEncoding] specifies how to decode string values (e.g., 'utf-8', 'latin1').
+/// If null, string values are returned as [Uint8List] instead of [String].
+///
+/// Throws [BencodeDecodeException] if the data is invalid.
+///
+/// Example:
+/// ```dart
+/// final encoded = encode({'key': 'value'});
+/// final decoded = decode(encoded, stringEncoding: 'utf-8');
+/// // => {'key': 'value'}
+/// ```
 dynamic decode(Uint8List data, {int? start, int? end, String? stringEncoding}) {
   if (data.isEmpty) {
     return null;
-  } else {
-    return _Decode(data, start: start, end: end, stringEncoding: stringEncoding)
-        .next();
   }
+  return _Decode(data, start: start, end: end, stringEncoding: stringEncoding)
+      .next();
 }
 
 class _Decode {
   int _position = 0;
-  String? _stringEncoding;
-  Uint8List _data;
+  final String? _stringEncoding;
+  final Uint8List _data;
 
-  _Decode(this._data, {int? start, int? end, String? stringEncoding}) {
-    _stringEncoding = stringEncoding?.toLowerCase();
-    if (end != null && start != null) {
-      _data = _data.sublist(start, end);
+  _Decode(Uint8List data, {int? start, int? end, String? stringEncoding})
+      : _stringEncoding = stringEncoding?.toLowerCase(),
+        _data = (start != null)
+            ? (() {
+                final actualStart = start;
+                final actualEnd = end ?? data.length;
+                if (actualStart < 0 ||
+                    actualEnd > data.length ||
+                    actualStart > actualEnd) {
+                  throw ArgumentError(
+                    'Invalid range: start=$actualStart, end=$actualEnd, data length=${data.length}',
+                  );
+                }
+                return data.sublist(actualStart, actualEnd);
+              })()
+            : data;
+
+  /// Parses an integer from the buffer.
+  ///
+  /// Supports positive and negative integers.
+  /// Throws [BencodeDecodeException] if the data is not a valid integer.
+  int _getIntFromBuffer(Uint8List buffer, int start, int end) {
+    if (start >= end) {
+      throw BencodeDecodeException('Empty integer at position $start', start);
     }
-  }
 
-  int getIntFromBuffer(Uint8List buffer, int start, int end) {
-    var sum = 0;
-    var sign = 1;
+    int sum = 0;
+    int sign = 1;
 
-    for (var i = start; i < end; i++) {
-      var num = buffer[i];
+    for (int i = start; i < end; i++) {
+      final byte = buffer[i];
 
-      if (num < 58 && num >= 48) {
-        sum = sum * 10 + (num - 48);
+      // Digit 0-9
+      if (byte >= 48 && byte < 58) {
+        sum = sum * 10 + (byte - 48);
         continue;
       }
 
-      if (i == start && num == 43) {
-        // +
+      // Plus sign at start
+      if (i == start && byte == 43) {
         continue;
       }
 
-      if (i == start && num == 45) {
-        // -
+      // Minus sign at start
+      if (i == start && byte == 45) {
         sign = -1;
         continue;
       }
 
-      if (num == 46) {
-        // .
-        // its a float. break here.
-        break;
+      // Decimal point (not supported in Bencode integers)
+      if (byte == 46) {
+        throw BencodeDecodeException(
+          'Floating point numbers are not supported in Bencode',
+          i,
+        );
       }
 
-      throw Exception('not a number: buffer[$i] = $num');
+      throw BencodeDecodeException(
+        'Invalid character in integer: ${String.fromCharCode(byte)} (0x${byte.toRadixString(16)})',
+        i,
+      );
     }
     return sum * sign;
   }
 
   dynamic next() {
-    if (_data.isEmpty) return null;
+    if (_position >= _data.length) {
+      return null;
+    }
+
     switch (_data[_position]) {
-      case _bencodeDictionaryStart:
+      case _BencodeConstants.dictionaryStart:
         return dictionary();
-      case _bencodeListStart:
+      case _BencodeConstants.listStart:
         return list();
-      case _bencodeIntegerStart:
+      case _BencodeConstants.integerStart:
         return integer();
       default:
         return buffer();
     }
   }
 
-  int find(chr) {
-    var i = _position;
-    var c = _data.length;
-    var d = _data;
-
-    while (i < c) {
-      if (d[i] == chr) return i;
-      i++;
+  /// Finds the next occurrence of [chr] starting from [_position].
+  ///
+  /// Throws [BencodeDecodeException] if the character is not found.
+  int _find(int chr) {
+    for (int i = _position; i < _data.length; i++) {
+      if (_data[i] == chr) {
+        return i;
+      }
     }
-    throw Exception(
-        'Invalid data: Missing delimiter "${String.fromCharCode(chr)}" [0x${(chr as int).toRadixString(16)}]');
+    throw BencodeDecodeException(
+      'Missing delimiter "${String.fromCharCode(chr)}" (0x${chr.toRadixString(16)})',
+      _position,
+    );
   }
 
   Map<String, dynamic> dictionary() {
-    _position++;
+    _position++; // Skip 'd'
 
-    var dict = <String, dynamic>{};
+    final dict = <String, dynamic>{};
 
-    while (_data[_position] != _bencodeEnd) {
-      var keyBuffer = buffer();
-      // It should be noted here that sometimes the returned key string will be wrong when parsed with utf-8
-      // For example, an infohash is encoded by latin1, and it will be wrong to decode it with utf-8.
-      // However, it is stipulated in the specification that utf8 is almost always used
-      if (keyBuffer is! String) {
-        try {
-          keyBuffer = utf8.decode(keyBuffer);
-        } catch (e) {
-          keyBuffer = String.fromCharCodes(keyBuffer);
-        }
-      }
-      dict[keyBuffer] = next();
+    while (
+        _position < _data.length && _data[_position] != _BencodeConstants.end) {
+      final keyBuffer = buffer();
+
+      // Convert key to String
+      // Note: Dictionary keys should be strings, but sometimes they're encoded
+      // in different encodings (e.g., latin1 for infohash). We try UTF-8 first,
+      // then fall back to char codes if that fails.
+      final key = keyBuffer is String
+          ? keyBuffer
+          : (() {
+              try {
+                return utf8.decode(keyBuffer);
+              } catch (e) {
+                // Fallback for non-UTF-8 keys (e.g., infohash)
+                return String.fromCharCodes(keyBuffer);
+              }
+            })();
+
+      dict[key] = next();
     }
 
-    _position++;
+    if (_position >= _data.length) {
+      throw BencodeDecodeException(
+        'Unexpected end of data while parsing dictionary',
+        _position,
+      );
+    }
 
+    _position++; // Skip 'e'
     return dict;
   }
 
-  List list() {
-    _position++;
+  List<dynamic> list() {
+    _position++; // Skip 'l'
 
-    var lst = [];
+    final lst = <dynamic>[];
 
-    while (_data[_position] != _bencodeEnd) {
+    while (
+        _position < _data.length && _data[_position] != _BencodeConstants.end) {
       lst.add(next());
     }
 
-    _position++;
+    if (_position >= _data.length) {
+      throw BencodeDecodeException(
+        'Unexpected end of data while parsing list',
+        _position,
+      );
+    }
 
+    _position++; // Skip 'e'
     return lst;
   }
 
   int integer() {
-    var end = find(_bencodeEnd);
-    var number = getIntFromBuffer(_data, _position + 1, end);
+    final end = _find(_BencodeConstants.end);
+    final number = _getIntFromBuffer(_data, _position + 1, end);
 
     _position = end + 1;
-
     return number;
   }
 
   dynamic buffer() {
-    var sep = find(_bencodeStringDelimiter);
-    var length = getIntFromBuffer(_data, _position, sep);
-    var end = ++sep + length;
+    final sep = _find(_BencodeConstants.stringDelimiter);
+    final length = _getIntFromBuffer(_data, _position, sep);
 
-    _position = end;
-    var sublist = _data.sublist(sep, end);
-    var encoder =
-        _stringEncoding == null ? null : Encoding.getByName(_stringEncoding);
-    return encoder != null ? encoder.decode(sublist) : sublist;
+    if (length < 0) {
+      throw BencodeDecodeException(
+        'Invalid string length: $length',
+        _position,
+      );
+    }
+
+    final dataStart = sep + 1;
+    final dataEnd = dataStart + length;
+
+    if (dataEnd > _data.length) {
+      throw BencodeDecodeException(
+        'String length ($length) exceeds available data (${_data.length - dataStart} bytes)',
+        _position,
+      );
+    }
+
+    _position = dataEnd;
+    final sublist = _data.sublist(dataStart, dataEnd);
+
+    if (_stringEncoding != null) {
+      final encoder = Encoding.getByName(_stringEncoding);
+      if (encoder == null) {
+        throw ArgumentError('Unknown encoding: $_stringEncoding');
+      }
+      return encoder.decode(sublist);
+    }
+
+    return sublist;
   }
 }

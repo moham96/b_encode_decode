@@ -9,6 +9,6 @@ environment:
 
 dev_dependencies:
   test: ^1.24.3
-  lints: ^2.0.1
+  lints: ">=2.0.1 <7.0.0"
   benchmark_harness: ^2.2.2
   coverage: ^1.15.0
